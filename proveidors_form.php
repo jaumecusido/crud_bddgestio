@@ -1,0 +1,320 @@
+<?php
+require_once 'db.php';
+$pdo = getPDO();
+
+$id      = $_GET['id'] ?? null;
+$nom     = '';
+$nif     = '';
+$adreca  = '';
+$telefon = '';
+$email   = '';
+
+if ($id) {
+    $stmt = $pdo->prepare('SELECT * FROM proveidors WHERE id = :id');
+    $stmt->execute(['id' => $id]);
+    $prov = $stmt->fetch();
+    if ($prov) {
+        $nom     = $prov['nom'];
+        $nif     = $prov['nif'];
+        $adreca  = $prov['adreca'];
+        $telefon = $prov['telefon'];
+        $email   = $prov['email'];
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $id      = $_POST['id'] ?? null;
+    $nom     = $_POST['nom'] ?? '';
+    $nif     = $_POST['nif'] ?? '';
+    $adreca  = $_POST['adreca'] ?? '';
+    $telefon = $_POST['telefon'] ?? '';
+    $email   = $_POST['email'] ?? '';
+
+    if ($id) {
+        $sql = 'UPDATE proveidors
+                SET nom = :nom, nif = :nif, adreca = :adreca, telefon = :telefon, email = :email
+                WHERE id = :id';
+        $params = compact('id','nom','nif','adreca','telefon','email');
+    } else {
+        $sql = 'INSERT INTO proveidors (nom, nif, adreca, telefon, email)
+                VALUES (:nom, :nif, :adreca, :telefon, :email)';
+        $params = compact('nom','nif','adreca','telefon','email');
+    }
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+
+    header('Location: proveidors_list.php');
+    exit;
+}
+?>
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title><?= $id ? 'Editar proveïdor' : 'Nou proveïdor' ?></title>
+    <style>
+        :root {
+            --bg: #f5f7fb;
+            --card-bg: #ffffff;
+            --text-main: #334155;
+            --text-soft: #64748b;
+            --btn-save-bg: #fde68a;
+            --btn-save-border: #facc15;
+            --btn-back-bg: #e5e7eb;
+            --btn-back-border: #cbd5f5;
+            --input-border: #cbd5e1;
+            --input-focus: #f97316;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+
+        body {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: radial-gradient(circle at top, #e0f2fe 0, var(--bg) 45%, #fefce8 100%);
+            color: var(--text-main);
+        }
+
+        .wrapper {
+            width: 100%;
+            max-width: 720px;
+            padding: 24px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 18px;
+            padding: 24px 28px;
+            box-shadow:
+                0 18px 45px rgba(15, 23, 42, 0.15),
+                0 0 0 1px rgba(148, 163, 184, 0.25);
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 18px;
+        }
+
+        .header-title h1 {
+            font-size: 1.3rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .header-title p {
+            font-size: 0.9rem;
+            color: var(--text-soft);
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 14px;
+            border-radius: 999px;
+            border: 1px solid transparent;
+            text-decoration: none;
+            font-size: 0.85rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition:
+                transform 0.12s ease,
+                box-shadow 0.12s ease,
+                background-color 0.12s ease,
+                border-color 0.12s ease;
+            white-space: nowrap;
+        }
+
+        .btn span.icon {
+            margin-right: 6px;
+        }
+
+        .btn-back {
+            background-color: var(--btn-back-bg);
+            border-color: var(--btn-back-border);
+            color: var(--text-main);
+        }
+
+        .btn-save {
+            background-color: var(--btn-save-bg);
+            border-color: var(--btn-save-border);
+            color: #111827;
+            box-shadow: 0 8px 18px rgba(250, 204, 21, 0.45);
+        }
+
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
+        }
+
+        form {
+            margin-top: 10px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px 20px;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .field label {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-soft);
+        }
+
+        .field label span.required {
+            color: #dc2626;
+            margin-left: 4px;
+        }
+
+        .field input {
+            padding: 8px 10px;
+            border-radius: 10px;
+            border: 1px solid var(--input-border);
+            font-size: 0.9rem;
+            color: var(--text-main);
+            background-color: #f9fafb;
+            transition:
+                border-color 0.12s ease,
+                box-shadow 0.12s ease,
+                background-color 0.12s ease;
+        }
+
+        .field input:focus {
+            outline: none;
+            border-color: var(--input-focus);
+            box-shadow: 0 0 0 1px var(--input-focus), 0 0 0 4px rgba(249, 115, 22, 0.18);
+            background-color: #ffffff;
+        }
+
+        .field-full {
+            grid-column: 1 / -1;
+        }
+
+        .form-footer {
+            margin-top: 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .hint {
+            font-size: 0.8rem;
+            color: var(--text-soft);
+        }
+
+        @media (max-width: 640px) {
+            .wrapper {
+                padding: 16px;
+            }
+
+            .card {
+                padding: 18px 16px;
+            }
+
+            .header {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            .form-footer {
+                flex-direction: column-reverse;
+                align-items: flex-start;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="wrapper">
+    <div class="card">
+        <div class="header">
+            <div class="header-title">
+                <h1><?= $id ? 'Editar proveïdor' : 'Nou proveïdor' ?></h1>
+                <p>
+                    <?= $id ? 'Modifica les dades del proveïdor seleccionat.' : 'Introdueix les dades per crear un nou proveïdor.' ?>
+                </p>
+            </div>
+            <div class="header-actions">
+                <a href="proveidors_list.php" class="btn btn-back">
+                    <span class="icon">←</span> Llista
+                </a>
+            </div>
+        </div>
+
+        <form method="post">
+            <input type="hidden" name="id" value="<?= htmlspecialchars($id ?? '') ?>">
+
+            <div class="grid">
+                <div class="field field-full">
+                    <label>Nom <span class="required">*</span></label>
+                    <input type="text" name="nom" value="<?= htmlspecialchars($nom) ?>" required>
+                </div>
+
+                <div class="field">
+                    <label>NIF</label>
+                    <input type="text" name="nif" value="<?= htmlspecialchars($nif) ?>">
+                </div>
+
+                <div class="field">
+                    <label>Telèfon</label>
+                    <input type="text" name="telefon" value="<?= htmlspecialchars($telefon) ?>">
+                </div>
+
+                <div class="field field-full">
+                    <label>Adreça</label>
+                    <input type="text" name="adreca" value="<?= htmlspecialchars($adreca) ?>">
+                </div>
+
+                <div class="field field-full">
+                    <label>Email</label>
+                    <input type="email" name="email" value="<?= htmlspecialchars($email) ?>">
+                </div>
+            </div>
+
+            <div class="form-footer">
+                <div class="hint">
+                    Els camps marcats amb <span class="required">*</span> són obligatoris.
+                </div>
+                <button type="submit" class="btn btn-save">
+                    <span class="icon">💾</span> Desar
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+</body>
+</html>
