@@ -1,6 +1,38 @@
 <?php
 require_once 'config.php';
 
+$databaseUrl = getenv('DATABASE_URL');
+
+if ($databaseUrl !== false) {
+    // SOM A RENDER (o entorn amb DATABASE_URL)
+    $parts = parse_url($databaseUrl);
+
+    $host = $parts['host'] ?? null;
+    $port = $parts['port'] ?? 5432;
+    $user = $parts['user'] ?? null;
+    $pass = $parts['pass'] ?? null;
+    $db   = isset($parts['path']) ? ltrim($parts['path'], '/') : null;
+
+    $dsn = "pgsql:host=$host;port=$port;dbname=$db;";
+} else {
+    // SOM EN LOCAL → POSA LES TEVES DADES LOCALS
+    $host = 'localhost';
+    $port = '5432';
+    $db   = 'BddGestio';
+    $user = 'postgres';
+    $pass = 'Jcm22122001';
+
+    $dsn = "pgsql:host=$host;port=$port;dbname=$db;";
+}
+
+try {
+    $pdo = new PDO($dsn, $user, $pass, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+    ]);
+} catch (PDOException $e) {
+    die('Error de connexió: ' . $e->getMessage());
+}
+
 function getPDO(): PDO {
     global $host, $port, $db, $user, $pass;
 
