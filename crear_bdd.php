@@ -140,6 +140,55 @@ CREATE TABLE IF NOT EXISTS empresa_params (
 );
 ";
 
+/*
+ * PROVEIDORS
+ * (assumit; si ja tens una altra definició, adapta-ho)
+ */
+$sqlList[] = "
+CREATE TABLE IF NOT EXISTS proveidors (
+    id          SERIAL PRIMARY KEY,
+    nom         VARCHAR(255) NOT NULL,
+    nif         VARCHAR(50),
+    adreca      TEXT,
+    email       VARCHAR(255),
+    telefon     VARCHAR(50),
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+";
+
+/*
+ * FACTURES_PROVEIDORS (capçalera de factura de proveïdor)
+ */
+$sqlList[] = "
+CREATE TABLE IF NOT EXISTS factures_proveidors (
+    id              SERIAL PRIMARY KEY,
+    proveidor_id    INTEGER NOT NULL REFERENCES proveidors(id),
+    data_factura    DATE NOT NULL,
+    num_factura_ext VARCHAR(100),
+    observacions    TEXT,
+    import_total    NUMERIC(12,2) NOT NULL DEFAULT 0,
+    created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
+);
+";
+
+/*
+ * FACTURA_PROVEIDOR_LINIES (línies de factura de proveïdor)
+ */
+$sqlList[] = "
+CREATE TABLE IF NOT EXISTS factura_proveidor_linies (
+    id           SERIAL PRIMARY KEY,
+    factura_id   INTEGER NOT NULL REFERENCES factures_proveidors(id) ON DELETE CASCADE,
+    num_linia    INTEGER NOT NULL,
+    article_id   INTEGER REFERENCES articles(id),
+    codi_article VARCHAR(50),
+    descripcio   TEXT,
+    preu_unitari NUMERIC(12,2) NOT NULL DEFAULT 0,
+    quantitat    NUMERIC(12,3) NOT NULL DEFAULT 0,
+    CONSTRAINT uq_factura_proveidor_linia UNIQUE (factura_id, num_linia)
+);
+";
 
 try {
     foreach ($sqlList as $sql) {
@@ -159,5 +208,3 @@ try {
 } catch (PDOException $e) {
     // si la taula factures no existeix encara, ho ignorem
 }
-
-
