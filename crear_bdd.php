@@ -1,12 +1,13 @@
 <?php
 // migrate_schema.php
 // Crea totes les taules bàsiques si no existeixen
+// i garanteix que hi hagi les columnes necessàries (ADD COLUMN IF NOT EXISTS)
 
 require_once 'db.php';
 
 $pdo = getPDO();
 
-// Array de sentències SQL
+// Array de sentències SQL (creació de taules)
 $sqlList = [];
 
 /*
@@ -26,8 +27,7 @@ CREATE TABLE IF NOT EXISTS clients (
 ";
 
 /*
- * ARTICLES
- * Afegit: iva, actiu, preu_compra
+ * ARTICLES (estructura base)
  */
 $sqlList[] = "
 CREATE TABLE IF NOT EXISTS articles (
@@ -194,12 +194,29 @@ CREATE TABLE IF NOT EXISTS factura_proveidor_linies (
 ";
 
 try {
+    // 1) Crear taules si no existeixen
     foreach ($sqlList as $sql) {
         $pdo->exec($sql);
     }
-    echo 'Esquema creat/actualitzat correctament (taules creades si no existien).';
+
+    // 2) Assegurar columnes mínimes a ARTICLES (per si la taula ja existia antiga)
+    $pdo->exec("
+        ALTER TABLE articles
+        ADD COLUMN IF NOT EXISTS preu_compra NUMERIC(12,2) NOT NULL DEFAULT 0
+    ");
+    $pdo->exec("
+        ALTER TABLE articles
+        ADD COLUMN IF NOT EXISTS iva NUMERIC(5,2) NOT NULL DEFAULT 21
+    ");
+    $pdo->exec("
+        ALTER TABLE articles
+        ADD COLUMN IF NOT EXISTS actiu BOOLEAN NOT NULL DEFAULT TRUE
+    ");
+
+    echo 'Esquema creat/actualitzat correctament (taules i columnes creades si no existien).';
+
 } catch (PDOException $e) {
-    echo 'Error creant taules: ' . $e->getMessage();
+    echo 'Error creant / actualitzant esquema: ' . $e->getMessage();
 }
 
 // Afegir columna enviadaportal a factures si no existeix
