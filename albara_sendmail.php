@@ -1,4 +1,3 @@
-
 <?php
 // Opcional: amagar avisos "deprecated" de llibreries de tercers
 error_reporting(E_ALL & ~E_DEPRECATED);
@@ -12,6 +11,87 @@ use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
 $pdo = getPDO();
+
+// ---------- FASE 0: pantalla de "enviant" amb spinner ----------
+if (!isset($_GET['run'])) {
+    $id = $_GET['id'] ?? null;
+    if (!$id || !ctype_digit((string)$id)) {
+        die('Albarà no especificat');
+    }
+    ?>
+    <!DOCTYPE html>
+    <html lang="ca">
+    <head>
+        <meta charset="UTF-8">
+        <title>Enviant albarà...</title>
+        <style>
+            :root {
+                --bg: #020617;
+                --text-main: #e5e7eb;
+                --text-soft: #9ca3af;
+            }
+            * {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+                font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            }
+            body {
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background:
+                    radial-gradient(circle at top, rgba(56,189,248,0.25), transparent 55%),
+                    radial-gradient(circle at bottom, rgba(34,197,94,0.2), transparent 55%),
+                    #020617;
+                color: var(--text-main);
+            }
+            .shell {
+                text-align: center;
+            }
+            .spinner {
+                width: 60px;
+                height: 60px;
+                border-radius: 50%;
+                border: 6px solid rgba(148,163,184,0.3);
+                border-top-color: #38bdf8;
+                animation: spin 1s linear infinite;
+                margin: 0 auto 16px auto;
+            }
+            @keyframes spin {
+                to { transform: rotate(360deg); }
+            }
+            h1 {
+                font-size: 1.1rem;
+                margin-bottom: 4px;
+            }
+            p {
+                font-size: 0.9rem;
+                color: var(--text-soft);
+            }
+        </style>
+        <script>
+            window.addEventListener('load', function () {
+                const url = new URL(window.location.href);
+                url.searchParams.set('run', '1');
+                window.location.href = url.toString();
+            });
+        </script>
+    </head>
+    <body>
+    <div class="shell">
+        <div class="spinner"></div>
+        <h1>Enviant albarà per correu...</h1>
+        <p>Espera uns segons mentre es genera el PDF i s'envia el missatge.</p>
+    </div>
+    </body>
+    </html>
+    <?php
+    exit;
+}
+
+// ---------- FASE 1: ja amb run=1, fem tota la feina ----------
 
 // Validar id d'albarà
 $id = $_GET['id'] ?? null;
@@ -65,6 +145,11 @@ if (file_exists($logoPath)) {
 }
 
 // 1) Generar PDF en memòria amb Dompdf
+$options = new Options();
+$options->set('isHtml5ParserEnabled', true);
+$options->set('isRemoteEnabled', true); // permet data URI [web:139]
+
+$dompdf = new Dompdf($options);
 ob_start();
 ?>
 <!DOCTYPE html>
@@ -183,18 +268,11 @@ $data = $alb['data_albara']
         <?= nl2br(htmlspecialchars($alb['observacions'])) ?>
     </div>
 <?php endif; ?>
-
 </body>
 </html>
 <?php
 $html = ob_get_clean();
 
-// Dompdf: generar PDF en memòria
-$options = new Options();
-$options->set('isHtml5ParserEnabled', true);
-$options->set('isRemoteEnabled', true); // permet data URI i recursos locals
-
-$dompdf = new Dompdf($options);
 $dompdf->loadHtml($html);
 $dompdf->setPaper('A4', 'portrait');
 $dompdf->render();
@@ -206,152 +284,178 @@ $filename = 'albara_'.$alb['num_albara'].'.pdf';
 $mail = new PHPMailer(true);
 
 try {
-    // CONFIGURACIÓ SMTP (ADAPTA-HO AL TEU CAS)
+    // CONFIGURACIÓ SMTP
     $mail->isSMTP();
     $mail->Host       = 'smtp.gmail.com';
     $mail->SMTPAuth   = true;
     $mail->Username   = 'jaume.cusido@gmail.com';
     $mail->Password   = 'ieax dcof ffbf nquc';   // app password
     $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-    $mail->Port       = 587;
+    $mail->Port       = 587;                    // [web:170]
 
     // Remitent i destinatari
     $mail->setFrom('jaume.cusido@gmail.com', 'BddGestio');
-    $mail->addAddress($alb['client_email'], htmlspecialchars($alb['client_nom']));
+    $mail->addAddress($alb['client_email'], $alb['client_nom']);
+
+    // Contingut del correu
+    $subject = 'Albarà '.$alb['num_albara'];
+    $bodyHtml = 'Bon dia,<br><br>Adjunt tens l\'albarà <strong>'.
+                htmlspecialchars($alb['num_albara']).'</strong>.'.
+                '<br><br>Salutacions,<br>BddGestio';
+    $bodyText = "Bon dia,\n\nAdjunt tens l'albarà ".$alb['num_albara'].".\n\nSalutacions, BddGestio";
 
     // Adjuntar PDF
-    $mail->addStringAttachment($pdfOutput, $filename, 'base64', 'application/pdf');
+    $mail->addStringAttachment($pdfOutput, $filename, 'base64', 'application/pdf'); // [web:162]
 
-    // Contingut
     $mail->isHTML(true);
-    $mail->Subject = 'Albarà '.$alb['num_albara'];
-    $mail->Body    = 'Bon dia,<br><br>Adjunt tens l\'albarà <strong>'.
-                     htmlspecialchars($alb['num_albara']).'</strong>.'.
-                     '<br><br>Salutacions,<br>BddGestio';
-    $mail->AltBody = 'Bon dia,'."\n\n".
-                     'Adjunt tens l\'albarà '.$alb['num_albara'].".\n\n".
-                     'Salutacions, BddGestio';
+    $mail->Subject = $subject;
+    $mail->Body    = $bodyHtml;
+    $mail->AltBody = $bodyText;
 
     $mail->send();
 
-    // -------- Pantalla bonica de confirmació --------
+    // -------- Pantalla bonica de confirmació + vista del mail --------
     ?>
     <!DOCTYPE html>
-    <html>
+    <html lang="ca">
     <head>
         <meta charset="UTF-8">
-        <title>Correu enviat</title>
+        <title>Albarà enviat</title>
         <style>
             :root {
-                --bg: #f5f7fb;
-                --card-bg: #ffffff;
-                --text-main: #111827;
-                --text-soft: #64748b;
+                --bg: #020617;
+                --text-main: #e5e7eb;
+                --text-soft: #9ca3af;
                 --accent: #22c55e;
-                --accent-soft: #dcfce7;
-                --btn-bg: #22c55e;
-                --btn-border: #16a34a;
             }
-            * {
-                box-sizing: border-box;
-                margin: 0;
-                padding: 0;
-                font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            *{
+                box-sizing:border-box;margin:0;padding:0;
+                font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
             }
-            body {
-                min-height: 100vh;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                background: radial-gradient(circle at top, #bbf7d0 0, var(--bg) 45%, #fefce8 100%);
-                color: var(--text-main);
+            body{
+                min-height:100vh;display:flex;align-items:center;justify-content:center;
+                background:
+                    radial-gradient(circle at top,rgba(74,222,128,0.28),transparent 55%),
+                    radial-gradient(circle at bottom,rgba(56,189,248,0.18),transparent 55%),
+                    #020617;
+                color:var(--text-main);
             }
-            .card {
-                background: var(--card-bg);
-                border-radius: 18px;
-                padding: 24px 28px;
-                max-width: 420px;
-                width: 100%;
-                box-shadow:
-                    0 18px 45px rgba(15, 23, 42, 0.18),
-                    0 0 0 1px rgba(148, 163, 184, 0.3);
-                text-align: center;
+            .card{
+                position:relative;background:radial-gradient(circle at top left,rgba(34,197,94,0.20),rgba(15,23,42,0.98));
+                border-radius:22px;padding:24px 26px 18px;max-width:620px;width:100%;
+                box-shadow:0 26px 70px rgba(15,23,42,0.95),0 0 0 1px rgba(148,163,184,0.45);
+                overflow:hidden;
             }
-            .icon-circle {
-                width: 52px;
-                height: 52px;
-                border-radius: 999px;
-                margin: 0 auto 10px auto;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                background-color: var(--accent-soft);
-                color: var(--accent);
-                font-size: 26px;
+            .card-inner{position:relative;z-index:1;}
+            .icon-row{
+                display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;
             }
-            h1 {
-                font-size: 1.2rem;
-                margin-bottom: 6px;
+            .icon-circle{
+                width:52px;height:52px;border-radius:999px;
+                display:flex;align-items:center;justify-content:center;
+                background-color:#14532d;color:var(--accent);font-size:26px;
+                box-shadow:0 14px 28px rgba(22,163,74,0.8);
             }
-            p {
-                font-size: 0.9rem;
-                color: var(--text-soft);
-                margin-bottom: 4px;
+            .tag{
+                padding:2px 10px;border-radius:999px;border:1px solid rgba(148,163,184,0.9);
+                font-size:.7rem;text-transform:uppercase;letter-spacing:.16em;color:#e5e7eb;
             }
-            .highlight {
-                font-weight: 600;
-                color: var(--text-main);
+            h1{font-size:1.25rem;margin-bottom:4px;}
+            .subtitle{font-size:.85rem;color:var(--text-soft);margin-bottom:14px;}
+            .grid{
+                display:grid;grid-template-columns:1.2fr 1.2fr;
+                gap:8px 18px;margin-bottom:10px;
             }
-            .footer {
-                margin-top: 16px;
+            .label{
+                color:#9ca3af;text-transform:uppercase;letter-spacing:.12em;
+                font-size:.7rem;display:block;
             }
-            .btn {
-                margin-top: 14px;
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                padding: 8px 18px;
-                border-radius: 999px;
-                border: 1px solid var(--btn-border);
-                background-color: var(--btn-bg);
-                color: #ecfdf5;
-                font-size: 0.9rem;
-                font-weight: 600;
-                text-transform: uppercase;
-                letter-spacing: 0.06em;
-                cursor: pointer;
-                text-decoration: none;
-                box-shadow: 0 10px 22px rgba(22, 163, 74, 0.45);
-                transition:
-                    transform 0.12s ease,
-                    box-shadow 0.12s ease,
-                    background-color 0.12s ease,
-                    border-color 0.12s ease;
+            .value{font-size:.95rem;}
+            .value strong{font-size:1rem;}
+            .mail-preview{
+                margin-top:8px;padding:10px 12px;border-radius:12px;
+                background-color:rgba(15,23,42,0.9);
+                border:1px solid rgba(148,163,184,0.7);
+                font-size:.85rem;
             }
-            .btn:hover {
-                transform: translateY(-1px);
-                box-shadow: 0 14px 26px rgba(22, 163, 74, 0.55);
-                background-color: #16a34a;
+            .mail-header-row{
+                font-size:.8rem;color:var(--text-soft);margin-bottom:4px;
+            }
+            .mail-header-row span.label{font-weight:600;color:#cbd5f5;}
+            .mail-body{
+                margin-top:6px;padding-top:6px;border-top:1px dashed rgba(75,85,99,0.9);
+                color:#e5e7eb;font-size:.85rem;
+            }
+            .footer{
+                margin-top:14px;display:flex;justify-content:flex-end;
+            }
+            .btn{
+                display:inline-flex;align-items:center;justify-content:center;
+                padding:8px 18px;border-radius:999px;border:1px solid #16a34a;
+                background-color:#22c55e;color:#ecfdf5;font-size:.9rem;
+                font-weight:600;text-transform:uppercase;letter-spacing:.10em;
+                cursor:pointer;text-decoration:none;
+                box-shadow:0 10px 24px rgba(22,163,74,0.85);
+                transition:transform .12s,box-shadow .12s,background-color .12s,border-color .12s;
+            }
+            .btn:hover{
+                transform:translateY(-1px);
+                box-shadow:0 14px 30px rgba(22,163,74,1);
+                background-color:#16a34a;
             }
         </style>
     </head>
     <body>
     <div class="card">
-        <div class="icon-circle">✉️</div>
-        <h1>Albarà enviat correctament</h1>
-        <p>
-            S'ha enviat l'albarà
-            <span class="highlight">#<?= htmlspecialchars($alb['num_albara']) ?></span>
-            a
-            <span class="highlight"><?= htmlspecialchars($alb['client_nom']) ?></span>.
-        </p>
-        <p class="small">
-            Correu destinat a: <?= htmlspecialchars($alb['client_email']) ?>
-        </p>
-        <div class="footer">
-            <button class="btn" onclick="window.location.href='albarans_list.php';">
-                Acceptar
-            </button>
+        <div class="card-inner">
+            <div class="icon-row">
+                <div class="icon-circle">✉️</div>
+                <div class="tag">Albarà enviat</div>
+            </div>
+            <h1>Correu enviat correctament</h1>
+            <div class="subtitle">
+                L'albarà s'ha enviat com a adjunt PDF al client.
+            </div>
+
+            <div class="grid">
+                <div>
+                    <span class="label">Albarà</span>
+                    <span class="value"><strong>#<?= htmlspecialchars($alb['num_albara']) ?></strong></span>
+                </div>
+                <div>
+                    <span class="label">Total línies</span>
+                    <span class="value"><?= number_format($total, 2, ',', '.') ?> €</span>
+                </div>
+                <div>
+                    <span class="label">Client</span>
+                    <span class="value"><?= htmlspecialchars($alb['client_nom']) ?></span>
+                </div>
+                <div>
+                    <span class="label">Email destinatari</span>
+                    <span class="value"><?= htmlspecialchars($alb['client_email']) ?></span>
+                </div>
+            </div>
+
+            <!-- Vista del mail enviat -->
+            <div class="mail-preview">
+                <div class="mail-header-row">
+                    <span class="label">Assumpte:</span>
+                    <span class="value"><?= htmlspecialchars($subject) ?></span>
+                </div>
+                <div class="mail-header-row">
+                    <span class="label">A:</span>
+                    <span class="value"><?= htmlspecialchars($alb['client_email']) ?> (<?= htmlspecialchars($alb['client_nom']) ?>)</span>
+                </div>
+                <div class="mail-body">
+                    <?= $bodyHtml ?>
+                </div>
+            </div>
+
+            <div class="footer">
+                <button class="btn" onclick="window.location.href='albarans_list.php';">
+                    Tornar al llistat
+                </button>
+            </div>
         </div>
     </div>
     </body>
@@ -360,68 +464,76 @@ try {
     exit;
 
 } catch (Exception $e) {
+    // -------- Pantalla d'error --------
     ?>
     <!DOCTYPE html>
-    <html>
+    <html lang="ca">
     <head>
         <meta charset="UTF-8">
         <title>Error en enviar correu</title>
         <style>
-            body {
-                min-height: 100vh;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                background: #fef2f2;
-                font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-                color: #111827;
+            :root {
+                --bg: #fee2e2;
+                --text-main: #111827;
+                --text-soft: #6b7280;
             }
-            .card {
-                background: #ffffff;
-                border-radius: 18px;
-                padding: 20px 24px;
-                max-width: 420px;
-                width: 100%;
-                box-shadow:
-                    0 18px 45px rgba(153, 27, 27, 0.25),
-                    0 0 0 1px rgba(248, 113, 113, 0.7);
-                text-align: center;
+            *{
+                box-sizing:border-box;margin:0;padding:0;
+                font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
             }
-            h1 {
-                font-size: 1.1rem;
-                margin-bottom: 8px;
-                color: #b91c1c;
+            body{
+                min-height:100vh;display:flex;align-items:center;justify-content:center;
+                background:
+                    radial-gradient(circle at top,rgba(248,113,113,0.40),transparent 55%),
+                    #fee2e2;
+                color:var(--text-main);
             }
-            p {
-                font-size: 0.9rem;
-                margin-bottom: 6px;
+            .card{
+                background:#ffffff;border-radius:18px;padding:22px 24px;
+                max-width:520px;width:100%;
+                box-shadow:0 20px 45px rgba(153,27,27,0.35),
+                           0 0 0 1px rgba(248,113,113,0.7);
             }
-            .btn {
-                margin-top: 12px;
-                padding: 8px 18px;
-                border-radius: 999px;
-                border: 1px solid #b91c1c;
-                background-color: #fee2e2;
-                color: #7f1d1d;
-                font-size: 0.9rem;
-                font-weight: 600;
-                text-transform: uppercase;
-                letter-spacing: 0.06em;
-                cursor: pointer;
+            h1{font-size:1.15rem;margin-bottom:6px;color:#b91c1c;}
+            p{font-size:.9rem;margin-bottom:6px;}
+            .row{margin-top:6px;}
+            .row .label{font-weight:600;}
+            .error-msg{
+                margin-top:10px;padding:8px 10px;border-radius:10px;
+                background:#fee2e2;border:1px solid #f97373;
+                font-size:.8rem;color:#7f1d1d;
             }
-            .btn:hover {
-                background-color: #fecaca;
+            .footer{margin-top:14px;display:flex;justify-content:flex-end;}
+            .btn{
+                padding:7px 16px;border-radius:999px;border:1px solid #b91c1c;
+                background-color:#fecaca;color:#7f1d1d;font-size:.85rem;
+                font-weight:600;text-transform:uppercase;letter-spacing:.08em;
+                cursor:pointer;
             }
+            .btn:hover{background-color:#fca5a5;}
         </style>
     </head>
     <body>
     <div class="card">
         <h1>No s'ha pogut enviar el correu</h1>
-        <p>Hi ha hagut un problema en enviar l'albarà #<?= htmlspecialchars($alb['num_albara']) ?>.</p>
-        <p class="small"><?= htmlspecialchars($mail->ErrorInfo) ?></p>
-        <button class="btn" onclick="window.location.href='albarans_form.php?id=<?= htmlspecialchars($id) ?>';">
-            Tornar a l'albarà
-        </button>
+        <p>
+            Hi ha hagut un problema en enviar l'albarà
+            <strong>#<?= htmlspecialchars($alb['num_albara']) ?></strong>
+            al client <strong><?= htmlspecialchars($alb['client_nom']) ?></strong>.
+        </p>
+        <div class="row">
+            <span class="label">Email destinatari:</span>
+            <span><?= htmlspecialchars($alb['client_email']) ?></span>
+        </div>
+        <div class="error-msg">
+            <div class="label" style="font-weight:600; margin-bottom:2px;">Detall de l'error del servidor SMTP:</div>
+            <div class="small"><?= htmlspecialchars($mail->ErrorInfo) ?></div>
+        </div>
+        <div class="footer">
+            <button class="btn" onclick="window.location.href='albarans_form.php?id=<?= htmlspecialchars($id) ?>';">
+                Tornar a l'albarà
+            </button>
+        </div>
     </div>
     </body>
     </html>

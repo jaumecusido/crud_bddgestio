@@ -1,16 +1,72 @@
-
 <?php
+session_start();
+
 require_once 'db.php';
 $pdo = getPDO();
 
+// ---------- PERMISOS ----------
+$permisGestio = 0;
+if (!empty($_SESSION['usuari_id'])) {
+    $stmtUser = $pdo->prepare("SELECT permis_gestio FROM usuaris WHERE id = :id AND actiu = TRUE");
+    $stmtUser->execute(['id' => $_SESSION['usuari_id']]);
+    $rowUser = $stmtUser->fetch(PDO::FETCH_ASSOC);
+    if ($rowUser) {
+        $permisGestio = (int)$rowUser['permis_gestio'];
+    }
+}
+
+$tePermisLectura    = $permisGestio >= 1;
+$tePermisEscriptura = $permisGestio >= 2;
+
+// Si no té ni lectura, fora
+if (!$tePermisLectura) {
+    http_response_code(403);
+    echo "<h2>Accés no permès al mòdul d'albarans.</h2>";
+    exit;
+}
+
+// ID de l'albarà (si ve en edit)
 $id = $_GET['id'] ?? null;
+
+// ---------- CARREGAR ESTAT FACTURACIÓ ----------
+$estaFacturat = false;
+$numFactura   = null;
+
+if ($id && ctype_digit((string)$id)) {
+    $stmtFac = $pdo->prepare("
+        SELECT f.num_factura
+        FROM factura_albarans fa
+        JOIN factures f ON f.id = fa.factura_id
+        WHERE fa.albara_id = :id
+        ORDER BY f.data_factura, f.num_factura
+        LIMIT 1
+    ");
+    $stmtFac->execute(['id' => $id]);
+    $rowFac = $stmtFac->fetch(PDO::FETCH_ASSOC);
+    if ($rowFac) {
+        $estaFacturat = true;
+        $numFactura   = $rowFac['num_factura'];
+    }
+}
+
+// Si està facturat, bloquegem també les modificacions fins i tot amb permís d'escriptura
+$esEditable = $tePermisEscriptura && !$estaFacturat;
+
+// Si no hi ha escriptura o està facturat, bloquejar POST
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$esEditable) {
+    http_response_code(403);
+    echo "<h2>No es poden desar canvis: albarà facturat o permís insuficient.</h2>";
+    exit;
+}
+
+// ---------- CÀRREGA INICIAL ----------
 
 // 1) Carregar llista de clients
 $clientsStmt = $pdo->query("SELECT id, nom FROM clients ORDER BY nom");
 $clients = $clientsStmt->fetchAll(PDO::FETCH_ASSOC);
 
-// 2) Processar POST (capçalera + línies)
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+// 2) Processar POST (capçalera + línies) només si es pot editar
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $esEditable) {
     $id             = $_POST['id'] ?? null;
     $client_id      = $_POST['client_id'] ?? null;
     $data_albara    = $_POST['data_albara'] ?? date('Y-m-d');
@@ -25,11 +81,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $_POST['delete_line'] = [$_POST['delete_line_id']];
     }
 
-    // agafem adreça actual del client
-    $stmt = $pdo->prepare("SELECT adreca FROM clients WHERE id = :id");
+    // agafem adreça i email actual del client (per mostrar-los)
+    $stmt = $pdo->prepare("SELECT adreca, email FROM clients WHERE id = :id");
     $stmt->execute(['id' => $client_id]);
     $cli = $stmt->fetch(PDO::FETCH_ASSOC);
     $adreca_entrega = $cli ? $cli['adreca'] : '';
+    $email_client   = $cli ? $cli['email']  : '';
 
     $pdo->beginTransaction();
     try {
@@ -176,14 +233,15 @@ $adreca_entrega = '';
 $observacions   = '';
 $linies         = [];
 $articles       = [];
+$email_client   = '';
 
 // Carregar articles per al select de nova línia
 $artsStmt = $pdo->query("SELECT id, codi, descripcio FROM articles ORDER BY codi");
 $articles = $artsStmt->fetchAll(PDO::FETCH_ASSOC);
 
-if ($id) {
+if ($id && ctype_digit((string)$id)) {
     $stmt = $pdo->prepare("
-        SELECT a.*, c.nom AS client_nom
+        SELECT a.*, c.nom AS client_nom, c.email AS client_email, c.adreca AS client_adreca
         FROM albarans a
         JOIN clients c ON c.id = a.client_id
         WHERE a.id = :id
@@ -194,12 +252,13 @@ if ($id) {
     if ($row) {
         $client_id      = $row['client_id'];
         $data_albara    = $row['data_albara'];
-        $adreca_entrega = $row['adreca_entrega'];
+        $adreca_entrega = $row['adreca_entrega'] ?: ($row['client_adreca'] ?? '');
         $observacions   = $row['observacions'];
+        $email_client   = $row['client_email'] ?? '';
     }
 
     $stmt = $pdo->prepare("
-        SELECT id, num_linia, codi_article, descripcio, preu_unitari, quantitat, num_factura
+        SELECT id, num_linia, codi_article, descripcio, preu_unitari, quantitat
         FROM albara_linies
         WHERE albara_id = :id
         ORDER BY num_linia
@@ -207,6 +266,17 @@ if ($id) {
     $stmt->execute(['id' => $id]);
     $linies = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
+
+// Si encara no tenim email (nou albarà però amb client triat en el GET/primer cop)
+if (!$email_client && $client_id) {
+    $stmt = $pdo->prepare("SELECT email FROM clients WHERE id = :id");
+    $stmt->execute(['id' => $client_id]);
+    $email_client = ($stmt->fetchColumn()) ?: '';
+}
+
+// atributs HTML segons permisos / estat facturació
+$attrDisabled = $esEditable ? '' : 'disabled';
+$attrReadOnly = $esEditable ? '' : 'readonly';
 ?>
 <!DOCTYPE html>
 <html>
@@ -228,6 +298,12 @@ if ($id) {
             --row-hover: #eff6ff;
             --row-even: #f9fafb;
             --row-odd: #fefce8;
+            --btn-disabled-bg: #e5e7eb;
+            --btn-disabled-border: #d4d4d8;
+            --btn-disabled-text: #9ca3af;
+            --tag-ok-bg: #ecfdf5;
+            --tag-ok-border: #22c55e;
+            --tag-ok-text: #166534;
         }
 
         * {
@@ -265,7 +341,7 @@ if ($id) {
             display: flex;
             justify-content: space-between;
             gap: 16px;
-            margin-bottom: 16px;
+            margin-bottom: 12px;
         }
 
         .header-title h1 {
@@ -281,9 +357,30 @@ if ($id) {
             color: var(--text-soft);
         }
 
+        .facturat-pill {
+            margin-top: 6px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--tag-ok-border);
+            background-color: var(--tag-ok-bg);
+            color: var(--tag-ok-text);
+            font-size: 0.8rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .facturat-pill span.icon {
+            font-size: 1rem;
+        }
+
         .header-actions {
             display: flex;
-            gap: 10px;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 8px;
         }
 
         .btn {
@@ -337,18 +434,22 @@ if ($id) {
             color: #1e293b;
         }
 
-        .btn-danger {
-            background-color: #fee2e2;
-            border-color: #fecaca;
-            color: #b91c1c;
-            font-size: 0.78rem;
-            padding: 4px 10px;
-            border-radius: 999px;
+        .btn-disabled {
+            background-color: var(--btn-disabled-bg);
+            border-color: var(--btn-disabled-border);
+            color: var(--btn-disabled-text);
+            box-shadow: none;
+            cursor: default;
         }
 
         .btn:hover {
             transform: translateY(-1px);
             box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
+        }
+
+        .btn-disabled:hover {
+            transform: none;
+            box-shadow: none;
         }
 
         form {
@@ -556,6 +657,10 @@ if ($id) {
                 flex-direction: column;
                 align-items: stretch;
             }
+            .header-actions {
+                flex-direction: row;
+                justify-content: flex-end;
+            }
             .form-footer {
                 flex-direction: column-reverse;
                 align-items: flex-start;
@@ -573,7 +678,21 @@ if ($id) {
         <div class="header">
             <div class="header-title">
                 <h1><?= $id ? 'Editar albarà' : 'Nou albarà' ?></h1>
-                <p>Capçalera i línies en una sola pantalla.</p>
+                <p>
+                    <?=
+                    $estaFacturat
+                        ? 'Albarà facturat: no es permeten modificacions.'
+                        : ($tePermisEscriptura
+                            ? 'Capçalera i línies en una sola pantalla.'
+                            : 'Vista en mode només lectura: no es poden modificar dades.')
+                    ?>
+                </p>
+                <?php if ($estaFacturat && $numFactura !== null): ?>
+                    <div class="facturat-pill">
+                        <span class="icon">✅</span>
+                        Facturat a la factura núm. <?= htmlspecialchars($numFactura) ?>
+                    </div>
+                <?php endif; ?>
             </div>
             <div class="header-actions">
                 <a href="albarans_list.php" class="btn btn-back">
@@ -585,7 +704,7 @@ if ($id) {
                         <span class="icon">📄</span> Albarà PDF
                     </a>
                     <a href="albara_sendmail.php?id=<?= htmlspecialchars($id) ?>"
-                       class="btn btn-save">
+                       class="btn btn-secondary">
                         <span class="icon">✉️</span> Enviar mail
                     </a>
                 <?php endif; ?>
@@ -599,7 +718,7 @@ if ($id) {
             <div class="grid-header">
                 <div class="field">
                     <label>Client <span class="required">*</span></label>
-                    <select name="client_id" required>
+                    <select name="client_id" required <?= $attrDisabled ?>>
                         <option value="">— Tria un client —</option>
                         <?php foreach ($clients as $c): ?>
                             <option value="<?= $c['id'] ?>"
@@ -613,7 +732,8 @@ if ($id) {
                 <div class="field">
                     <label>Data <span class="required">*</span></label>
                     <input type="date" name="data_albara"
-                           value="<?= htmlspecialchars($data_albara) ?>" required>
+                           value="<?= htmlspecialchars($data_albara) ?>"
+                           required <?= $attrDisabled ?>>
                 </div>
 
                 <div class="field field-full">
@@ -622,8 +742,16 @@ if ($id) {
                 </div>
 
                 <div class="field field-full">
+                    <label>Correu on s’enviarà l’albarà</label>
+                    <input type="email"
+                           value="<?= htmlspecialchars($email_client) ?>"
+                           placeholder="Sense email de client definit"
+                           disabled>
+                </div>
+
+                <div class="field field-full">
                     <label>Observacions</label>
-                    <textarea name="observacions"><?= htmlspecialchars($observacions) ?></textarea>
+                    <textarea name="observacions" <?= $attrDisabled ?>><?= htmlspecialchars($observacions) ?></textarea>
                 </div>
             </div>
 
@@ -646,7 +774,8 @@ if ($id) {
                     <?php if (empty($linies)): ?>
                         <tr>
                             <td colspan="7" class="empty">
-                                Encara no hi ha línies. Afegeix-ne una més avall.
+                                Encara no hi ha línies.
+                                <?= $esEditable ? 'Afegeix-ne una més avall.' : 'No es poden afegir ni modificar línies.' ?>
                             </td>
                         </tr>
                     <?php else: ?>
@@ -660,33 +789,42 @@ if ($id) {
                                 </td>
                                 <td>
                                     <input type="text" name="line_codi[]"
-                                           value="<?= htmlspecialchars($l['codi_article']) ?>">
+                                           value="<?= htmlspecialchars($l['codi_article']) ?>"
+                                           <?= $attrReadOnly ?>>
                                 </td>
                                 <td>
                                     <input type="text" name="line_desc[]"
-                                           value="<?= htmlspecialchars($l['descripcio']) ?>">
+                                           value="<?= htmlspecialchars($l['descripcio']) ?>"
+                                           <?= $attrReadOnly ?>>
                                 </td>
                                 <td class="col-qty">
                                     <input class="input-num" type="number" step="0.01" min="0"
                                            name="line_quantitat[]"
-                                           value="<?= htmlspecialchars($l['quantitat']) ?>">
+                                           value="<?= htmlspecialchars($l['quantitat']) ?>"
+                                           <?= $attrReadOnly ?>>
                                 </td>
                                 <td class="col-preu">
                                     <input class="input-num" type="number" step="0.01" min="0"
                                            name="line_preu[]"
-                                           value="<?= htmlspecialchars($l['preu_unitari']) ?>">
+                                           value="<?= htmlspecialchars($l['preu_unitari']) ?>"
+                                           <?= $attrReadOnly ?>>
                                 </td>
                                 <td class="col-total">
                                     <?= htmlspecialchars(number_format($import, 2, ',', '.')) ?> €
                                 </td>
                                 <td class="col-del">
-                                    <button type="submit"
-                                            name="delete_line_id"
-                                            value="<?= htmlspecialchars($l['id']) ?>"
-                                            class="btn btn-danger"
-                                            onclick="return confirm('Vols eliminar aquesta línia?');">
-                                        ✖
-                                    </button>
+                                    <?php if ($esEditable): ?>
+                                        <button type="submit"
+                                                name="delete_line_id"
+                                                value="<?= htmlspecialchars($l['id']) ?>"
+                                                class="btn btn-secondary"
+                                                style="padding:4px 10px;"
+                                                onclick="return confirm('Vols eliminar aquesta línia?');">
+                                            ✖
+                                        </button>
+                                    <?php else: ?>
+                                        <span class="small">🔒</span>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -702,7 +840,7 @@ if ($id) {
                 </div>
                 <div class="grid-header" style="grid-template-columns: 2fr 1fr;">
                     <div class="field">
-                        <select name="new_article_id">
+                        <select name="new_article_id" <?= $attrDisabled ?>>
                             <option value="">— Article —</option>
                             <?php foreach ($articles as $art): ?>
                                 <option value="<?= $art['id'] ?>">
@@ -713,7 +851,7 @@ if ($id) {
                     </div>
                     <div class="field">
                         <input class="input-num" type="number" name="new_quantitat"
-                               step="0.01" min="0" placeholder="Quantitat">
+                               step="0.01" min="0" placeholder="Quantitat" <?= $attrDisabled ?>>
                     </div>
                 </div>
             </div>
@@ -721,15 +859,30 @@ if ($id) {
             <!-- Peu formulari -->
             <div class="form-footer">
                 <div class="hint">
-                    Pots afegir o eliminar línies i, quan acabis, prem Desar per tornar al llistat.
+                    <?php
+                    if ($estaFacturat) {
+                        echo 'Aquest albarà ja està facturat i no es pot modificar.';
+                    } elseif ($tePermisEscriptura) {
+                        echo 'Pots afegir o eliminar línies i, quan acabis, prem Desar per tornar al llistat.';
+                    } else {
+                        echo 'Mode només lectura: no es poden modificar ni desar canvis.';
+                    }
+                    ?>
                 </div>
                 <div class="footer-buttons">
-                    <button type="submit" name="afegir_linia" class="btn btn-secondary">
-                        <span class="icon">＋</span> Afegir línia
-                    </button>
-                    <button type="submit" name="desar" class="btn btn-save">
-                        <span class="icon">💾</span> Desar
-                    </button>
+                    <?php if ($esEditable): ?>
+                        <button type="submit" name="afegir_linia" class="btn btn-secondary">
+                            <span class="icon">＋</span> Afegir línia
+                        </button>
+                        <button type="submit" name="desar" class="btn btn-save">
+                            <span class="icon">💾</span> Desar
+                        </button>
+                    <?php else: ?>
+                        <span class="btn btn-secondary btn-disabled">
+                            <span class="icon">🔒</span>
+                            <?= $estaFacturat ? 'Albarà facturat' : 'Sense permís d\'edició' ?>
+                        </span>
+                    <?php endif; ?>
                 </div>
             </div>
         </form>

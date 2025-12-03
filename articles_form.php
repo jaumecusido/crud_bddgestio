@@ -1,6 +1,36 @@
 <?php
+session_start();
+
 require_once 'db.php';
 $pdo = getPDO();
+
+// Carregar permís de mestres de l'usuari loguejat
+$permisMestres = 0;
+if (!empty($_SESSION['usuari_id'])) {
+    $stmtUser = $pdo->prepare("SELECT permis_mestres FROM usuaris WHERE id = :id AND actiu = TRUE");
+    $stmtUser->execute(['id' => $_SESSION['usuari_id']]);
+    $rowUser = $stmtUser->fetch(PDO::FETCH_ASSOC);
+    if ($rowUser) {
+        $permisMestres = (int)$rowUser['permis_mestres'];
+    }
+}
+
+$tePermisLectura    = $permisMestres >= 1;
+$tePermisEscriptura = $permisMestres >= 2;
+
+// Si no té ni lectura, fora
+if (!$tePermisLectura) {
+    http_response_code(403);
+    echo "<h2>Accés no permès al formulari d'articles.</h2>";
+    exit;
+}
+
+// Bloquejar operacions POST si no hi ha permís d'escriptura
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$tePermisEscriptura) {
+    http_response_code(403);
+    echo "<h2>Permís insuficient: només lectura, no es poden desar canvis.</h2>";
+    exit;
+}
 
 $id   = $_GET['id'] ?? null;
 $codi = '';
@@ -11,7 +41,7 @@ $iva  = 21;
 if ($id) {
     $stmt = $pdo->prepare('SELECT * FROM articles WHERE id = :id');
     $stmt->execute(['id' => $id]);
-    $art = $stmt->fetch();
+    $art = $stmt->fetch(PDO::FETCH_ASSOC);
     if ($art) {
         $codi       = $art['codi'];
         $descripcio = $art['descripcio'];
@@ -20,7 +50,7 @@ if ($id) {
     }
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $tePermisEscriptura) {
     $id          = $_POST['id'] ?? null;
     $codi        = $_POST['codi'] ?? '';
     $descripcio  = $_POST['descripcio'] ?? '';
@@ -62,12 +92,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             --text-soft: #64748b;
             --accent: #0ea5e9;
             --accent-soft: #e0f2fe;
-            --btn-save-bg: #f9a8d4;      /* rosa pastel */
+            --btn-save-bg: #f9a8d4;
             --btn-save-border: #ec4899;
             --btn-back-bg: #e5e7eb;
             --btn-back-border: #cbd5f5;
             --input-border: #cbd5e1;
             --input-focus: #0ea5e9;
+            --btn-disabled-bg: #e5e7eb;
+            --btn-disabled-border: #d1d5db;
+            --btn-disabled-text: #9ca3af;
         }
 
         * {
@@ -165,9 +198,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             box-shadow: 0 8px 18px rgba(236, 72, 153, 0.45);
         }
 
+        .btn-save-disabled {
+            background-color: var(--btn-disabled-bg);
+            border-color: var(--btn-disabled-border);
+            color: var(--btn-disabled-text);
+            cursor: default;
+            box-shadow: none;
+        }
+
         .btn:hover {
             transform: translateY(-1px);
             box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
+        }
+
+        .btn-save-disabled:hover {
+            transform: none;
+            box-shadow: none;
         }
 
         form {
@@ -268,7 +314,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="header-title">
                 <h1><?= $id ? 'Editar article' : 'Nou article' ?></h1>
                 <p>
-                    <?= $id ? 'Modifica les dades de l’article seleccionat.' : 'Introdueix les dades per crear un nou article.' ?>
+                    <?= $id
+                        ? 'Modifica les dades de l’article seleccionat.'
+                        : 'Introdueix les dades per crear un nou article.' ?>
+                    <?php if (!$tePermisEscriptura): ?>
+                        (Permís només de lectura: no es poden desar canvis)
+                    <?php endif; ?>
                 </p>
             </div>
             <div class="header-actions">
@@ -284,22 +335,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="grid">
                 <div class="field">
                     <label>Codi <span class="required">*</span></label>
-                    <input type="text" name="codi" value="<?= htmlspecialchars($codi) ?>" required>
+                    <input type="text" name="codi" value="<?= htmlspecialchars($codi) ?>"
+                        <?= $tePermisEscriptura ? 'required' : 'readonly' ?>>
                 </div>
 
                 <div class="field">
                     <label>Preu <span class="required">*</span></label>
-                    <input type="number" step="0.01" name="preu" value="<?= htmlspecialchars($preu) ?>" required>
+                    <input type="number" step="0.01" name="preu" value="<?= htmlspecialchars($preu) ?>"
+                        <?= $tePermisEscriptura ? 'required' : 'readonly' ?>>
                 </div>
 
                 <div class="field field-full">
                     <label>Descripció <span class="required">*</span></label>
-                    <input type="text" name="descripcio" value="<?= htmlspecialchars($descripcio) ?>" required>
+                    <input type="text" name="descripcio" value="<?= htmlspecialchars($descripcio) ?>"
+                        <?= $tePermisEscriptura ? 'required' : 'readonly' ?>>
                 </div>
 
                 <div class="field">
                     <label>IVA (%) <span class="required">*</span></label>
-                    <input type="number" step="0.01" name="iva" value="<?= htmlspecialchars($iva) ?>" required>
+                    <input type="number" step="0.01" name="iva" value="<?= htmlspecialchars($iva) ?>"
+                        <?= $tePermisEscriptura ? 'required' : 'readonly' ?>>
                 </div>
             </div>
 
@@ -307,13 +362,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="hint">
                     Els camps marcats amb <span class="required">*</span> són obligatoris.
                 </div>
-                <button type="submit" class="btn btn-save">
-                    <span class="icon">💾</span> Desar
-                </button>
+                <?php if ($tePermisEscriptura): ?>
+                    <button type="submit" class="btn btn-save">
+                        <span class="icon">💾</span> Desar
+                    </button>
+                <?php else: ?>
+                    <button type="button" class="btn btn-save btn-save-disabled" title="Només lectura">
+                        <span class="icon">🔒</span> Només lectura
+                    </button>
+                <?php endif; ?>
             </div>
         </form>
     </div>
 </div>
 </body>
 </html>
-```
