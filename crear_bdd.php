@@ -27,15 +27,19 @@ CREATE TABLE IF NOT EXISTS clients (
 
 /*
  * ARTICLES
+ * Afegit: iva, actiu, preu_compra
  */
 $sqlList[] = "
 CREATE TABLE IF NOT EXISTS articles (
-    id          SERIAL PRIMARY KEY,
-    codi        VARCHAR(50) UNIQUE NOT NULL,
-    descripcio  TEXT NOT NULL,
-    preu        NUMERIC(12,2) NOT NULL DEFAULT 0,
-    created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
+    id           SERIAL PRIMARY KEY,
+    codi         VARCHAR(50) UNIQUE NOT NULL,
+    descripcio   TEXT NOT NULL,
+    preu         NUMERIC(12,2) NOT NULL DEFAULT 0,
+    preu_compra  NUMERIC(12,2) NOT NULL DEFAULT 0,
+    iva          NUMERIC(5,2) NOT NULL DEFAULT 21,
+    actiu        BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMP NOT NULL DEFAULT NOW()
 );
 ";
 
@@ -142,7 +146,6 @@ CREATE TABLE IF NOT EXISTS empresa_params (
 
 /*
  * PROVEIDORS
- * (assumit; si ja tens una altra definició, adapta-ho)
  */
 $sqlList[] = "
 CREATE TABLE IF NOT EXISTS proveidors (
